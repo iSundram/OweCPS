@@ -168,7 +168,8 @@ func detectFrameworksAndRuntime(scan scanResult, signals *signalCollector) ([]st
 	add(hasBasePrefix(scan, "vite.config."), "Vite", "found vite.config.*")
 	add(hasBasePrefix(scan, "webpack.config."), "Webpack", "found webpack.config.*")
 	add(scan.hasBase("angular.json"), "Angular", "found angular.json")
-	add(scan.hasBase("pubspec.yaml") && strings.Contains(readFileIfExists(scan.root, scan.pathsByBase("pubspec.yaml")[0]), "flutter:"), "Flutter", "found flutter marker in pubspec.yaml")
+	pubspecPaths := scan.pathsByBase("pubspec.yaml")
+	add(len(pubspecPaths) > 0 && strings.Contains(readFileIfExists(scan.root, pubspecPaths[0]), "flutter:"), "Flutter", "found flutter marker in pubspec.yaml")
 
 	deps := readPackageDependencies(scan)
 	add(hasDep(deps, "next"), "Next.js", "found next in package.json")
@@ -345,7 +346,7 @@ func detectBuildSystem(scan scanResult, signals *signalCollector) string {
 
 var (
 	cmdMainPattern  = regexp.MustCompile(`^cmd/[^/]+/main\.go$`)
-	jsTsTestPattern = regexp.MustCompile(`(?i)\.(test|spec)\.(js|jsx|ts|tsx)$`)
+	testFilePattern = regexp.MustCompile(`(?i)\.(test|spec)\.(js|jsx|ts|tsx)$`)
 )
 
 func detectTestSystem(scan scanResult, signals *signalCollector) string {
@@ -356,7 +357,7 @@ func detectTestSystem(scan scanResult, signals *signalCollector) string {
 		}
 	}
 	for _, f := range scan.files {
-		if jsTsTestPattern.MatchString(f) {
+		if testFilePattern.MatchString(f) {
 			signals.add("found JS/TS test files")
 			if hasBasePrefix(scan, "vitest.config.") {
 				signals.add("found vitest.config.*")
