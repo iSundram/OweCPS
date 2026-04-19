@@ -100,3 +100,20 @@ func TestDetectProject_Unknown(t *testing.T) {
 		t.Fatalf("confidence = %d, want 0", info.Confidence)
 	}
 }
+
+func TestDetectProject_FullStack(t *testing.T) {
+	root := t.TempDir()
+	writeFixtureFile(t, root, "go.mod", "module example.com/fullstack\n")
+	writeFixtureFile(t, root, "cmd/api/main.go", "package main\nfunc main(){}\n")
+	writeFixtureFile(t, root, "package.json", `{"dependencies":{"react":"18.0.0"}}`)
+	writeFixtureFile(t, root, "src/main.ts", "console.log('ui')\n")
+
+	info, err := DetectProject(root)
+	if err != nil {
+		t.Fatalf("DetectProject error: %v", err)
+	}
+
+	if info.ProjectType != "full_stack" {
+		t.Fatalf("project type = %s, want full_stack", info.ProjectType)
+	}
+}

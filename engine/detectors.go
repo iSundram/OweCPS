@@ -227,7 +227,7 @@ func detectEntryFiles(scan scanResult, languages []string, signals *signalCollec
 		case "Go":
 			add("main.go", 100)
 			for _, f := range scan.files {
-				if cmdMainPattern.MatchString(f) {
+				if goCmdMainPattern.MatchString(f) {
 					add(f, 90)
 				} else if strings.HasSuffix(f, "/main.go") {
 					add(f, 70)
@@ -345,8 +345,8 @@ func detectBuildSystem(scan scanResult, signals *signalCollector) string {
 }
 
 var (
-	cmdMainPattern  = regexp.MustCompile(`^cmd/[^/]+/main\.go$`)
-	testFilePattern = regexp.MustCompile(`(?i)\.(test|spec)\.(js|jsx|ts|tsx)$`)
+	goCmdMainPattern  = regexp.MustCompile(`^cmd/[^/]+/main\.go$`)
+	jsTestFilePattern = regexp.MustCompile(`(?i)\.(test|spec)\.(js|jsx|ts|tsx)$`)
 )
 
 func detectTestSystem(scan scanResult, signals *signalCollector) string {
@@ -357,7 +357,7 @@ func detectTestSystem(scan scanResult, signals *signalCollector) string {
 		}
 	}
 	for _, f := range scan.files {
-		if testFilePattern.MatchString(f) {
+		if jsTestFilePattern.MatchString(f) {
 			signals.add("found JS/TS test files")
 			if hasBasePrefix(scan, "vitest.config.") {
 				signals.add("found vitest.config.*")
@@ -438,6 +438,21 @@ func detectProjectType(scan scanResult, languages, frameworks []string, signals 
 	contains := func(name string) bool {
 		_, ok := typeSet[name]
 		return ok
+	}
+	hasAny := func(names ...string) bool {
+		for _, name := range names {
+			if contains(name) {
+				return true
+			}
+		}
+		return false
+	}
+	frontendLike := hasAny("web_app", "node_project")
+	backendLike := hasAny("go_project", "python_project", "rust_project", "java_project", "php_project", "dart_project", "cpp_project", "flutter_project")
+	if len(types) > 1 && frontendLike && backendLike {
+		*notes = append(*notes, "frontend and backend signatures detected")
+		signals.add("frontend and backend signatures found")
+		return "full_stack"
 	}
 
 	// Preferred subtype resolution inside a single language stack.
