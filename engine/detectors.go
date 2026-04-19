@@ -28,7 +28,7 @@ var extToLanguage = map[string]string{
 	".cc":    "C++",
 	".cxx":   "C++",
 	".hpp":   "C++",
-	".h":     "C/C++",
+	".h":     "C",
 	".swift": "Swift",
 	".scala": "Scala",
 	".lua":   "Lua",
@@ -95,7 +95,7 @@ func detectConfigFiles(scan scanResult, signals *signalCollector) []string {
 			signals.add("found " + f)
 			continue
 		}
-		if strings.HasPrefix(base, "next.config.") || strings.HasPrefix(base, "nuxt.config.") || strings.HasPrefix(base, "vite.config.") || strings.HasPrefix(base, "webpack.config.") || strings.HasPrefix(base, "jest.config.") || strings.HasPrefix(base, "vitest.config.") {
+		if hasAnyPrefix(base, []string{"next.config.", "nuxt.config.", "vite.config.", "webpack.config.", "jest.config.", "vitest.config."}) {
 			out = append(out, f)
 			signals.add("found " + f)
 		}
@@ -480,6 +480,15 @@ func hasExtension(scan scanResult, ext string) bool {
 func hasBasePrefix(scan scanResult, prefix string) bool {
 	for base := range scan.byBase {
 		if strings.HasPrefix(base, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasAnyPrefix(value string, prefixes []string) bool {
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(value, prefix) {
 			return true
 		}
 	}

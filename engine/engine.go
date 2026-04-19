@@ -43,9 +43,7 @@ func DetectProject(rootPath string) (ProjectInfo, error) {
 	}, signals.list())
 
 	sort.Strings(configFiles)
-	if len(notes) > 1 {
-		sort.Strings(notes)
-	}
+	sort.Strings(notes)
 
 	return ProjectInfo{
 		ProjectName:      scan.projectName,
