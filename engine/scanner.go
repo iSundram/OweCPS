@@ -1,98 +1,98 @@
 package engine
 
 import (
-"io/fs"
-"os"
-"path/filepath"
-"sort"
-"strings"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
 )
 
 func scanRepository(rootPath string) (scanResult, error) {
-rootAbs, err := filepath.Abs(rootPath)
-if err != nil {
-return scanResult{}, err
-}
+	rootAbs, err := filepath.Abs(rootPath)
+	if err != nil {
+		return scanResult{}, err
+	}
 
-res := scanResult{
-root:        rootAbs,
-projectName: filepath.Base(rootAbs),
-fileSet:     map[string]struct{}{},
-dirs:        map[string]struct{}{},
-extCounts:   map[string]int{},
-byBase:      map[string][]string{},
-}
+	res := scanResult{
+		root:        rootAbs,
+		projectName: filepath.Base(rootAbs),
+		fileSet:     map[string]struct{}{},
+		dirs:        map[string]struct{}{},
+		extCounts:   map[string]int{},
+		byBase:      map[string][]string{},
+	}
 
-err = filepath.WalkDir(rootAbs, func(path string, d fs.DirEntry, walkErr error) error {
-if walkErr != nil {
-return walkErr
-}
+	err = filepath.WalkDir(rootAbs, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
 
-rel, err := filepath.Rel(rootAbs, path)
-if err != nil {
-return err
-}
-rel = filepath.ToSlash(rel)
-if rel == "." {
-return nil
-}
+		rel, err := filepath.Rel(rootAbs, path)
+		if err != nil {
+			return err
+		}
+		rel = filepath.ToSlash(rel)
+		if rel == "." {
+			return nil
+		}
 
-if d.IsDir() {
-if d.Name() == ".git" {
-return filepath.SkipDir
-}
-res.dirs[rel] = struct{}{}
-return nil
-}
+		if d.IsDir() {
+			if d.Name() == ".git" {
+				return filepath.SkipDir
+			}
+			res.dirs[rel] = struct{}{}
+			return nil
+		}
 
-res.files = append(res.files, rel)
-res.fileSet[rel] = struct{}{}
+		res.files = append(res.files, rel)
+		res.fileSet[rel] = struct{}{}
 
-base := filepath.Base(rel)
-res.byBase[base] = append(res.byBase[base], rel)
-ext := strings.ToLower(filepath.Ext(base))
-if ext != "" {
-res.extCounts[ext]++
-}
-return nil
-})
-if err != nil {
-return scanResult{}, err
-}
+		base := filepath.Base(rel)
+		res.byBase[base] = append(res.byBase[base], rel)
+		ext := strings.ToLower(filepath.Ext(base))
+		if ext != "" {
+			res.extCounts[ext]++
+		}
+		return nil
+	})
+	if err != nil {
+		return scanResult{}, err
+	}
 
-sort.Strings(res.files)
-for k := range res.byBase {
-sort.Strings(res.byBase[k])
-}
-return res, nil
+	sort.Strings(res.files)
+	for k := range res.byBase {
+		sort.Strings(res.byBase[k])
+	}
+	return res, nil
 }
 
 func (s scanResult) hasFile(path string) bool {
-_, ok := s.fileSet[path]
-return ok
+	_, ok := s.fileSet[path]
+	return ok
 }
 
 func (s scanResult) hasBase(base string) bool {
-_, ok := s.byBase[base]
-return ok
+	_, ok := s.byBase[base]
+	return ok
 }
 
 func (s scanResult) pathsByBase(base string) []string {
-paths := s.byBase[base]
-out := make([]string, len(paths))
-copy(out, paths)
-return out
+	paths := s.byBase[base]
+	out := make([]string, len(paths))
+	copy(out, paths)
+	return out
 }
 
 func (s scanResult) hasDir(path string) bool {
-_, ok := s.dirs[path]
-return ok
+	_, ok := s.dirs[path]
+	return ok
 }
 
 func readFileIfExists(root, rel string) string {
-b, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
-if err != nil {
-return ""
-}
-return string(b)
+	b, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
+	if err != nil {
+		return ""
+	}
+	return string(b)
 }
