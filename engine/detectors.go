@@ -53,44 +53,44 @@ type detected struct {
 	notes            []string
 }
 
-func detectConfigFiles(scan scanResult, signals *signalCollector) []string {
-	configNames := map[string]struct{}{
-		"go.mod":            {},
-		"go.sum":            {},
-		"package.json":      {},
-		"package-lock.json": {},
-		"yarn.lock":         {},
-		"pnpm-lock.yaml":    {},
-		"tsconfig.json":     {},
-		"pyproject.toml":    {},
-		"requirements.txt":  {},
-		"poetry.lock":       {},
-		"Pipfile.lock":      {},
-		"Cargo.toml":        {},
-		"Cargo.lock":        {},
-		"pom.xml":           {},
-		"build.gradle":      {},
-		"build.gradle.kts":  {},
-		"composer.json":     {},
-		"composer.lock":     {},
-		"pubspec.yaml":      {},
-		"pubspec.lock":      {},
-		"CMakeLists.txt":    {},
-		"Makefile":          {},
-		"Dockerfile":        {},
-		"Taskfile.yml":      {},
-		"Taskfile.yaml":     {},
-		"angular.json":      {},
-		"pytest.ini":        {},
-		"conftest.py":       {},
-		"Gemfile":           {},
-		"Gemfile.lock":      {},
-	}
+var knownConfigNames = map[string]struct{}{
+	"go.mod":            {},
+	"go.sum":            {},
+	"package.json":      {},
+	"package-lock.json": {},
+	"yarn.lock":         {},
+	"pnpm-lock.yaml":    {},
+	"tsconfig.json":     {},
+	"pyproject.toml":    {},
+	"requirements.txt":  {},
+	"poetry.lock":       {},
+	"Pipfile.lock":      {},
+	"Cargo.toml":        {},
+	"Cargo.lock":        {},
+	"pom.xml":           {},
+	"build.gradle":      {},
+	"build.gradle.kts":  {},
+	"composer.json":     {},
+	"composer.lock":     {},
+	"pubspec.yaml":      {},
+	"pubspec.lock":      {},
+	"CMakeLists.txt":    {},
+	"Makefile":          {},
+	"Dockerfile":        {},
+	"Taskfile.yml":      {},
+	"Taskfile.yaml":     {},
+	"angular.json":      {},
+	"pytest.ini":        {},
+	"conftest.py":       {},
+	"Gemfile":           {},
+	"Gemfile.lock":      {},
+}
 
+func detectConfigFiles(scan scanResult, signals *signalCollector) []string {
 	var out []string
 	for _, f := range scan.files {
 		base := filepath.Base(f)
-		if _, ok := configNames[base]; ok {
+		if _, ok := knownConfigNames[base]; ok {
 			out = append(out, f)
 			signals.add("found " + f)
 			continue
