@@ -390,9 +390,13 @@ func detectTestSystem(scan scanResult, signals *signalCollector) string {
 
 func detectProjectType(scan scanResult, languages, frameworks []string, signals *signalCollector, notes *[]string) string {
 	types := []string{}
+	typeSet := map[string]struct{}{}
 	addType := func(cond bool, t, signal string) {
 		if cond {
-			types = append(types, t)
+			if _, ok := typeSet[t]; !ok {
+				types = append(types, t)
+				typeSet[t] = struct{}{}
+			}
 			signals.add(signal)
 		}
 	}
@@ -425,17 +429,38 @@ func detectProjectType(scan scanResult, languages, frameworks []string, signals 
 	addType(scan.hasBase("pubspec.yaml") && hasLang("Dart"), "dart_project", "pubspec.yaml + .dart evidence")
 	addType(scan.hasBase("CMakeLists.txt") && (hasLang("C++") || hasLang("C/C++")), "cpp_project", "CMakeLists.txt + C/C++ evidence")
 
-	types = dedupeStrings(types)
-	sort.Strings(types)
 	if len(types) == 0 {
 		*notes = append(*notes, "project_type remains unknown because no strong manifest+language combination was found")
 		return "unknown"
 	}
+
+	contains := func(name string) bool {
+		_, ok := typeSet[name]
+		return ok
+	}
+
+	// Preferred subtype resolution inside a single language stack.
+	if contains("flutter_project") {
+		return "flutter_project"
+	}
+	if contains("web_app") {
+		return "web_app"
+	}
+	if contains("dart_project") {
+		return "dart_project"
+	}
+	if contains("node_project") && len(types) == 1 {
+		return "node_project"
+	}
+
+	// Monorepo only when multiple distinct ecosystem signatures are present.
 	if len(types) > 1 {
 		*notes = append(*notes, "multiple strong project-type signatures detected")
 		signals.add("multiple project-type signatures found")
 		return "monorepo"
 	}
+
+	sort.Strings(types)
 	return types[0]
 }
 

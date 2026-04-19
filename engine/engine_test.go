@@ -67,8 +67,8 @@ func TestDetectProject_NextJS(t *testing.T) {
 		t.Fatalf("DetectProject error: %v", err)
 	}
 
-	if info.ProjectType != "monorepo" {
-		t.Fatalf("project type = %s, want monorepo due to overlapping strong signatures", info.ProjectType)
+	if info.ProjectType != "web_app" {
+		t.Fatalf("project type = %s, want web_app", info.ProjectType)
 	}
 	if info.Runtime != "node" {
 		t.Fatalf("runtime = %s, want node", info.Runtime)
