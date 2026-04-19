@@ -427,7 +427,7 @@ func detectProjectType(scan scanResult, languages, frameworks []string, signals 
 	addType(scan.hasBase("composer.json") && hasLang("PHP"), "php_project", "composer.json + .php evidence")
 	addType(scan.hasBase("pubspec.yaml") && hasLang("Dart") && hasFramework("Flutter"), "flutter_project", "pubspec.yaml + Dart + Flutter evidence")
 	addType(scan.hasBase("pubspec.yaml") && hasLang("Dart"), "dart_project", "pubspec.yaml + .dart evidence")
-	addType(scan.hasBase("CMakeLists.txt") && (hasLang("C++") || hasLang("C/C++")), "cpp_project", "CMakeLists.txt + C/C++ evidence")
+	addType(scan.hasBase("CMakeLists.txt") && (hasLang("C++") || hasLang("C")), "cpp_project", "CMakeLists.txt + C/C++ evidence")
 
 	if len(types) == 0 {
 		*notes = append(*notes, "project_type remains unknown because no strong manifest+language combination was found")
