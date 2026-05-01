@@ -193,6 +193,8 @@ func runtimeFromPrimaryLanguage(languages []string) string {
 		return "jvm"
 	case "PHP":
 		return "php"
+	case "Ruby":
+		return "ruby"
 	case "Dart":
 		return "dart"
 	case "C#":
@@ -227,6 +229,10 @@ func detectFrameworksAndRuntime(scan scanResult, languages []string, signals *si
 	add(hasDep(deps, "svelte"), "Svelte", "found svelte in package.json")
 	add(hasDep(deps, "express"), "Express", "found express in package.json")
 	add(hasDep(deps, "@nestjs/core"), "NestJS", "found @nestjs/core in package.json")
+
+	composerDeps := readComposerDependencies(scan)
+	add(hasDep(composerDeps, "laravel/framework"), "Laravel", "found laravel/framework in composer.json")
+	add(hasDep(composerDeps, "symfony/http-kernel"), "Symfony", "found symfony/http-kernel in composer.json")
 
 	frameworks = dedupeStrings(frameworks)
 	sort.Strings(frameworks)
@@ -287,6 +293,12 @@ func detectEntryFiles(scan scanResult, languages []string, signals *signalCollec
 			add("wsgi.py", 85)
 		case "Rust":
 			add("src/main.rs", 100)
+			// Rust workspaces have no root-level src/main.rs; scan member dirs.
+			for _, f := range scan.files {
+				if strings.HasSuffix(f, "/src/main.rs") {
+					add(f, 80)
+				}
+			}
 		case "Java":
 			for _, f := range scan.files {
 				if strings.HasPrefix(f, "src/main/java/") && strings.HasSuffix(f, "Application.java") {
@@ -323,7 +335,20 @@ func detectEntryFiles(scan scanResult, languages []string, signals *signalCollec
 	return out
 }
 
-func detectPackageManager(scan scanResult, signals *signalCollector) string {
+func detectPackageManager(scan scanResult, languages []string, signals *signalCollector) string {
+	// Ruby-first: when Ruby is the dominant language, Gemfile beats any JS lock
+	// file that may exist for asset bundling (e.g. Rails + Webpack/Yarn).
+	if len(languages) > 0 && languages[0] == "Ruby" {
+		if scan.hasBaseAtRoot("Gemfile.lock") {
+			signals.add("found Gemfile.lock")
+			return "bundler"
+		}
+		if scan.hasBaseAtRoot("Gemfile") {
+			signals.add("found Gemfile")
+			return "bundler"
+		}
+	}
+
 	type rule struct {
 		base     string
 		name     string
@@ -354,6 +379,8 @@ func detectPackageManager(scan scanResult, signals *signalCollector) string {
 		{base: "composer.json", name: "composer"},
 		{base: "Gemfile.lock", name: "bundler"},
 		{base: "Gemfile", name: "bundler"},
+		// Fallback: package.json present but not installed yet (no lock file).
+		{base: "package.json", name: "npm"},
 	}
 	for _, r := range rules {
 		var found bool
@@ -436,6 +463,32 @@ func detectTestSystem(scan scanResult, signals *signalCollector) string {
 		signals.add("found vitest.config.*")
 		return "vitest"
 	}
+	// .NET test frameworks — scan .csproj files for well-known package references.
+	// This must execute before the jest.config check so that JS sub-projects
+	// inside a .NET repository do not override the primary test framework.
+	csprojChecked := 0
+	for _, f := range scan.files {
+		if !strings.HasSuffix(f, ".csproj") {
+			continue
+		}
+		csprojChecked++
+		if csprojChecked > 20 { // cap file reads on very large repos
+			break
+		}
+		content := strings.ToLower(readFileIfExists(scan.root, f))
+		if strings.Contains(content, "xunit") {
+			signals.add("found xunit reference in .csproj")
+			return "xunit"
+		}
+		if strings.Contains(content, "nunit") {
+			signals.add("found nunit reference in .csproj")
+			return "nunit"
+		}
+		if strings.Contains(content, "mstest") {
+			signals.add("found mstest reference in .csproj")
+			return "mstest"
+		}
+	}
 	if hasBasePrefix(scan, "jest.config.") {
 		signals.add("found jest.config.*")
 		return "jest"
@@ -497,6 +550,7 @@ func detectProjectType(scan scanResult, languages, frameworks []string, signals 
 	addType(scan.hasBase("Cargo.toml") && hasLang("Rust"), "rust_project", "Cargo.toml + .rs evidence")
 	addType((scan.hasBase("pom.xml") || scan.hasBase("build.gradle") || scan.hasBase("build.gradle.kts")) && hasLang("Java"), "java_project", "java build manifest + .java evidence")
 	addType(scan.hasBase("composer.json") && hasLang("PHP"), "php_project", "composer.json + .php evidence")
+	addType(scan.hasBase("Gemfile") && hasLang("Ruby"), "ruby_project", "Gemfile + .rb evidence")
 	addType(scan.hasBase("pubspec.yaml") && hasLang("Dart") && hasFramework("Flutter"), "flutter_project", "pubspec.yaml + Dart + Flutter evidence")
 	addType(scan.hasBase("pubspec.yaml") && hasLang("Dart"), "dart_project", "pubspec.yaml + .dart evidence")
 	addType(scan.hasBase("CMakeLists.txt") && (hasLang("C++") || hasLang("C")), "cpp_project", "CMakeLists.txt + C/C++ evidence")
@@ -518,8 +572,12 @@ func detectProjectType(scan scanResult, languages, frameworks []string, signals 
 		}
 		return false
 	}
-	frontendLike := hasAny("web_app", "node_project")
-	backendLike := hasAny("go_project", "go_library", "python_project", "rust_project", "java_project", "php_project", "dart_project", "cpp_project", "flutter_project")
+	// full_stack requires an actual frontend *framework* (React/Vue/etc.) — not
+	// just a node_project produced by a bare package.json+JS-files.  PHP/Ruby
+	// projects that use Vite/Webpack for asset bundling should remain classified
+	// as their primary language type, not promoted to full_stack.
+	frontendLike := contains("web_app")
+	backendLike := hasAny("go_project", "go_library", "python_project", "rust_project", "java_project", "php_project", "ruby_project", "dart_project", "cpp_project", "flutter_project")
 	if len(types) > 1 && frontendLike && backendLike {
 		*notes = append(*notes, "frontend and backend signatures detected")
 		signals.add("frontend and backend signatures found")
@@ -538,6 +596,15 @@ func detectProjectType(scan scanResult, languages, frameworks []string, signals 
 	}
 	if contains("dart_project") {
 		return "dart_project"
+	}
+	// PHP and Ruby projects that carry a node_project signature (from bundler
+	// tooling such as Vite/Webpack) should resolve to their primary language
+	// type rather than falling through to monorepo.
+	if contains("ruby_project") && !contains("web_app") {
+		return "ruby_project"
+	}
+	if contains("php_project") && !contains("web_app") {
+		return "php_project"
 	}
 	if contains("node_project") && len(types) == 1 {
 		return "node_project"
@@ -613,6 +680,31 @@ func readPackageDependencies(scan scanResult) map[string]struct{} {
 func hasDep(deps map[string]struct{}, name string) bool {
 	_, ok := deps[name]
 	return ok
+}
+
+func readComposerDependencies(scan scanResult) map[string]struct{} {
+	type composerJSON struct {
+		Require    map[string]string `json:"require"`
+		RequireDev map[string]string `json:"require-dev"`
+	}
+	out := map[string]struct{}{}
+	for _, path := range scan.pathsByBase("composer.json") {
+		content := readFileIfExists(scan.root, path)
+		if content == "" {
+			continue
+		}
+		var c composerJSON
+		if err := json.Unmarshal([]byte(content), &c); err != nil {
+			continue
+		}
+		for k := range c.Require {
+			out[k] = struct{}{}
+		}
+		for k := range c.RequireDev {
+			out[k] = struct{}{}
+		}
+	}
+	return out
 }
 
 func dedupeStrings(in []string) []string {
