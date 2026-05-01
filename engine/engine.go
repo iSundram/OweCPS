@@ -13,7 +13,7 @@ func DetectProject(rootPath string) (ProjectInfo, error) {
 
 	configFiles := detectConfigFiles(scan, signals)
 	languages := detectLanguages(scan, signals)
-	frameworks, runtime := detectFrameworksAndRuntime(scan, signals)
+	frameworks, runtime := detectFrameworksAndRuntime(scan, languages, signals)
 	entryFiles := detectEntryFiles(scan, languages, signals)
 	packageManager := detectPackageManager(scan, signals)
 	buildSystem := detectBuildSystem(scan, signals)

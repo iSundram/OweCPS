@@ -2,6 +2,7 @@ package engine
 
 import (
 	"encoding/json"
+	"fmt"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -87,17 +88,35 @@ var knownConfigNames = map[string]struct{}{
 }
 
 func detectConfigFiles(scan scanResult, signals *signalCollector) []string {
+	baseCounts := map[string]int{}
 	var out []string
 	for _, f := range scan.files {
 		base := filepath.Base(f)
 		if _, ok := knownConfigNames[base]; ok {
 			out = append(out, f)
-			signals.add("found " + f)
+			baseCounts[base]++
 			continue
 		}
 		if hasAnyPrefix(base, []string{"next.config.", "nuxt.config.", "vite.config.", "webpack.config.", "jest.config.", "vitest.config."}) {
 			out = append(out, f)
-			signals.add("found " + f)
+			baseCounts[base]++
+		}
+	}
+	// Emit one signal per basename: individual path when unique, count summary when multiple.
+	bases := make([]string, 0, len(baseCounts))
+	for b := range baseCounts {
+		bases = append(bases, b)
+	}
+	sort.Strings(bases)
+	for _, base := range bases {
+		count := baseCounts[base]
+		if count == 1 {
+			paths := scan.pathsByBase(base)
+			if len(paths) > 0 {
+				signals.add("found " + paths[0])
+			}
+		} else {
+			signals.add(fmt.Sprintf("found %d %s files", count, base))
 		}
 	}
 	sort.Strings(out)
@@ -154,7 +173,37 @@ func detectLanguages(scan scanResult, signals *signalCollector) []string {
 	return out
 }
 
-func detectFrameworksAndRuntime(scan scanResult, signals *signalCollector) ([]string, string) {
+// runtimeFromPrimaryLanguage derives the runtime from the highest-scoring
+// language so that a minor JS tooling package.json cannot override a
+// predominantly Python or Dart codebase.
+func runtimeFromPrimaryLanguage(languages []string) string {
+	if len(languages) == 0 {
+		return "unknown"
+	}
+	switch languages[0] {
+	case "Go":
+		return "go"
+	case "JavaScript", "TypeScript":
+		return "node"
+	case "Python":
+		return "python"
+	case "Rust":
+		return "rust"
+	case "Java", "Kotlin", "Scala":
+		return "jvm"
+	case "PHP":
+		return "php"
+	case "Dart":
+		return "dart"
+	case "C#":
+		return "dotnet"
+	case "Swift":
+		return "swift"
+	}
+	return "unknown"
+}
+
+func detectFrameworksAndRuntime(scan scanResult, languages []string, signals *signalCollector) ([]string, string) {
 	frameworks := []string{}
 	add := func(cond bool, framework, signal string) {
 		if cond {
@@ -182,27 +231,9 @@ func detectFrameworksAndRuntime(scan scanResult, signals *signalCollector) ([]st
 	frameworks = dedupeStrings(frameworks)
 	sort.Strings(frameworks)
 
-	runtime := "unknown"
-	switch {
-	case scan.hasBase("go.mod"):
-		runtime = "go"
-	case scan.hasBase("package.json"):
-		runtime = "node"
-	case scan.hasBase("pyproject.toml") || scan.hasBase("requirements.txt") || scan.hasBase("Pipfile.lock"):
-		runtime = "python"
-	case scan.hasBase("Cargo.toml"):
-		runtime = "rust"
-	case scan.hasBase("pom.xml") || scan.hasBase("build.gradle") || scan.hasBase("build.gradle.kts"):
-		runtime = "jvm"
-	case scan.hasBase("composer.json"):
-		runtime = "php"
-	case scan.hasBase("pubspec.yaml"):
-		runtime = "dart"
-	case hasExtension(scan, ".cs"):
-		runtime = "dotnet"
-	}
+	runtime := runtimeFromPrimaryLanguage(languages)
 	if runtime != "unknown" {
-		signals.add("runtime inferred from explicit project markers")
+		signals.add("runtime inferred from primary language evidence")
 	}
 
 	return frameworks, runtime
@@ -234,8 +265,17 @@ func detectEntryFiles(scan scanResult, languages []string, signals *signalCollec
 				}
 			}
 		case "JavaScript", "TypeScript":
-			add("src/main.ts", 95)
-			add("src/index.js", 90)
+			// Next.js App Router (13+) and Pages Router
+			add("src/app/page.tsx", 98)
+			add("app/page.tsx", 97)
+			add("src/app/page.ts", 96)
+			add("app/page.ts", 95)
+			add("src/pages/index.tsx", 94)
+			add("pages/index.tsx", 93)
+			add("src/pages/index.js", 92)
+			add("pages/index.js", 91)
+			add("src/main.ts", 90)
+			add("src/index.js", 88)
 			add("index.js", 85)
 			add("app.js", 85)
 			add("server.js", 85)
@@ -285,8 +325,9 @@ func detectEntryFiles(scan scanResult, languages []string, signals *signalCollec
 
 func detectPackageManager(scan scanResult, signals *signalCollector) string {
 	type rule struct {
-		base string
-		name string
+		base     string
+		name     string
+		rootOnly bool // when true, only fire if the file is at repository root
 	}
 	rules := []rule{
 		{base: "pnpm-lock.yaml", name: "pnpm"},
@@ -295,19 +336,33 @@ func detectPackageManager(scan scanResult, signals *signalCollector) string {
 		{base: "go.mod", name: "go modules"},
 		{base: "Cargo.lock", name: "cargo"},
 		{base: "Cargo.toml", name: "cargo"},
+		// Maven/Gradle — must be root-level to win over Android sub-manifests.
+		{base: "pom.xml", name: "maven", rootOnly: true},
+		{base: "build.gradle.kts", name: "gradle", rootOnly: true},
+		{base: "build.gradle", name: "gradle", rootOnly: true},
+		{base: "gradlew", name: "gradle", rootOnly: true},
+		{base: "mvnw", name: "maven", rootOnly: true},
 		{base: "poetry.lock", name: "poetry"},
 		{base: "Pipfile.lock", name: "pipenv"},
 		{base: "requirements.txt", name: "pip"},
 		{base: "pyproject.toml", name: "pip"},
+		// pubspec before Gemfile: Android sub-dirs often carry a Gemfile (fastlane)
+		// that must not override the top-level Flutter package manager.
+		{base: "pubspec.lock", name: "pub"},
+		{base: "pubspec.yaml", name: "pub"},
 		{base: "composer.lock", name: "composer"},
 		{base: "composer.json", name: "composer"},
 		{base: "Gemfile.lock", name: "bundler"},
 		{base: "Gemfile", name: "bundler"},
-		{base: "pubspec.lock", name: "pub"},
-		{base: "pubspec.yaml", name: "pub"},
 	}
 	for _, r := range rules {
-		if scan.hasBase(r.base) {
+		var found bool
+		if r.rootOnly {
+			found = scan.hasBaseAtRoot(r.base)
+		} else {
+			found = scan.hasBase(r.base)
+		}
+		if found {
 			signals.add("found " + r.base)
 			return r.name
 		}
@@ -327,6 +382,13 @@ func detectBuildSystem(scan scanResult, signals *signalCollector) string {
 		{check: func(s scanResult) bool { return hasBasePrefix(s, "vite.config.") }, name: "vite", signal: "found vite.config.*"},
 		{check: func(s scanResult) bool { return s.hasBase("angular.json") }, name: "angular cli", signal: "found angular.json"},
 		{check: func(s scanResult) bool { return hasBasePrefix(s, "webpack.config.") }, name: "webpack", signal: "found webpack.config.*"},
+		// Maven/Gradle checked at root level so Android sub-manifests don't win.
+		{check: func(s scanResult) bool { return s.hasBaseAtRoot("pom.xml") && hasExtension(s, ".java") }, name: "maven", signal: "found pom.xml"},
+		{check: func(s scanResult) bool {
+			return (s.hasBaseAtRoot("build.gradle") || s.hasBaseAtRoot("build.gradle.kts")) && hasExtension(s, ".java")
+		}, name: "gradle", signal: "found build.gradle"},
+		// Cargo is both package manager and build system for Rust.
+		{check: func(s scanResult) bool { return s.hasBase("Cargo.toml") && hasExtension(s, ".rs") }, name: "cargo", signal: "found Cargo.toml with .rs files"},
 		{check: func(s scanResult) bool { return s.hasBase("CMakeLists.txt") }, name: "cmake", signal: "found CMakeLists.txt"},
 		{check: func(s scanResult) bool { return s.hasBase("Makefile") }, name: "make", signal: "found Makefile"},
 		{check: func(s scanResult) bool { return s.hasBase("Taskfile.yml") || s.hasBase("Taskfile.yaml") }, name: "task", signal: "found Taskfile"},
@@ -356,20 +418,16 @@ func detectTestSystem(scan scanResult, signals *signalCollector) string {
 			return "go test"
 		}
 	}
+	// Rust integration tests live in a top-level tests/ or tests-*/ directory.
 	for _, f := range scan.files {
-		if jsTestFilePattern.MatchString(f) {
-			signals.add("found JS/TS test files")
-			if hasBasePrefix(scan, "vitest.config.") {
-				signals.add("found vitest.config.*")
-				return "vitest"
-			}
-			if hasBasePrefix(scan, "jest.config.") {
-				signals.add("found jest.config.*")
-				return "jest"
-			}
-			return "js/ts tests"
+		if strings.HasSuffix(f, ".rs") &&
+			(strings.HasPrefix(f, "tests/") || strings.Contains(f, "/tests/")) {
+			signals.add("found Rust integration test files")
+			return "cargo test"
 		}
 	}
+	// Explicit config markers take priority over file-pattern scanning so that
+	// a Python project carrying JS assets is not mis-identified as js/ts tests.
 	if scan.hasBase("pytest.ini") || scan.hasBase("conftest.py") {
 		signals.add("found pytest markers")
 		return "pytest"
@@ -381,6 +439,12 @@ func detectTestSystem(scan scanResult, signals *signalCollector) string {
 	if hasBasePrefix(scan, "jest.config.") {
 		signals.add("found jest.config.*")
 		return "jest"
+	}
+	for _, f := range scan.files {
+		if jsTestFilePattern.MatchString(f) {
+			signals.add("found JS/TS test files")
+			return "js/ts tests"
+		}
 	}
 	if scan.hasDir("tests") || scan.hasDir("test") {
 		signals.add("found tests directory")
@@ -419,9 +483,16 @@ func detectProjectType(scan scanResult, languages, frameworks []string, signals 
 		return false
 	}
 
-	addType(scan.hasBase("go.mod") && hasLang("Go"), "go_project", "go.mod + .go evidence")
-	addType(scan.hasBase("package.json") && (hasFramework("React") || hasFramework("Next.js") || hasFramework("Vue") || hasFramework("Svelte")), "web_app", "package.json + web framework marker")
-	addType(scan.hasBase("package.json") && (hasLang("JavaScript") || hasLang("TypeScript")), "node_project", "package.json + JS/TS evidence")
+	goHasMain := scan.hasBase("main.go")
+	addType(scan.hasBase("go.mod") && hasLang("Go") && goHasMain, "go_project", "go.mod + main.go evidence")
+	addType(scan.hasBase("go.mod") && hasLang("Go") && !goHasMain, "go_library", "go.mod without main.go (library)")
+	// Require actual .js/.ts source files — not just a package.json — so that a
+	// Python/Go project carrying a package.json for linting tools does not
+	// incorrectly acquire a node_project or web_app signature.
+	hasJSFiles := hasExtension(scan, ".js") || hasExtension(scan, ".jsx") ||
+		hasExtension(scan, ".ts") || hasExtension(scan, ".tsx")
+	addType(scan.hasBase("package.json") && hasJSFiles && (hasFramework("React") || hasFramework("Next.js") || hasFramework("Vue") || hasFramework("Svelte")), "web_app", "package.json + web framework marker")
+	addType(scan.hasBase("package.json") && hasJSFiles, "node_project", "package.json + JS/TS source files")
 	addType((scan.hasBase("pyproject.toml") || scan.hasBase("requirements.txt")) && hasLang("Python"), "python_project", "python manifest + .py evidence")
 	addType(scan.hasBase("Cargo.toml") && hasLang("Rust"), "rust_project", "Cargo.toml + .rs evidence")
 	addType((scan.hasBase("pom.xml") || scan.hasBase("build.gradle") || scan.hasBase("build.gradle.kts")) && hasLang("Java"), "java_project", "java build manifest + .java evidence")
@@ -448,7 +519,7 @@ func detectProjectType(scan scanResult, languages, frameworks []string, signals 
 		return false
 	}
 	frontendLike := hasAny("web_app", "node_project")
-	backendLike := hasAny("go_project", "python_project", "rust_project", "java_project", "php_project", "dart_project", "cpp_project", "flutter_project")
+	backendLike := hasAny("go_project", "go_library", "python_project", "rust_project", "java_project", "php_project", "dart_project", "cpp_project", "flutter_project")
 	if len(types) > 1 && frontendLike && backendLike {
 		*notes = append(*notes, "frontend and backend signatures detected")
 		signals.add("frontend and backend signatures found")
@@ -456,6 +527,9 @@ func detectProjectType(scan scanResult, languages, frameworks []string, signals 
 	}
 
 	// Preferred subtype resolution inside a single language stack.
+	if contains("go_library") {
+		return "go_library"
+	}
 	if contains("flutter_project") {
 		return "flutter_project"
 	}

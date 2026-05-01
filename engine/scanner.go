@@ -8,6 +8,21 @@ import (
 	"strings"
 )
 
+// ignoredDirs are skipped during the repository walk; they contain generated
+// artefacts or dependency caches that add no identification signal.
+var ignoredDirs = map[string]struct{}{
+	"node_modules": {},
+	"vendor":       {},
+	"__pycache__":  {},
+	".venv":        {},
+	"venv":         {},
+	"env":          {},
+	".dart_tool":   {},
+	".gradle":      {},
+	".next":        {},
+	".nuxt":        {},
+}
+
 func scanRepository(rootPath string) (scanResult, error) {
 	rootAbs, err := filepath.Abs(rootPath)
 	if err != nil {
@@ -38,7 +53,11 @@ func scanRepository(rootPath string) (scanResult, error) {
 		}
 
 		if d.IsDir() {
-			if d.Name() == ".git" {
+			name := d.Name()
+			if name == ".git" {
+				return filepath.SkipDir
+			}
+			if _, skip := ignoredDirs[name]; skip {
 				return filepath.SkipDir
 			}
 			res.dirs[rel] = struct{}{}
@@ -87,6 +106,18 @@ func (s scanResult) pathsByBase(base string) []string {
 func (s scanResult) hasDir(path string) bool {
 	_, ok := s.dirs[path]
 	return ok
+}
+
+// hasBaseAtRoot returns true only when the given basename exists at the
+// root of the repository (no path separators), preventing a nested file
+// (e.g. android/Gemfile) from overriding a root-level marker.
+func (s scanResult) hasBaseAtRoot(base string) bool {
+	for _, path := range s.byBase[base] {
+		if !strings.Contains(path, "/") {
+			return true
+		}
+	}
+	return false
 }
 
 func readFileIfExists(root, rel string) string {
